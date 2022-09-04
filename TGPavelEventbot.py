@@ -1,8 +1,7 @@
 import os
 import logging
-import time
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Bot
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, CallbackContext
 
 
@@ -29,12 +28,25 @@ async def help_command(update: Update, context: CallbackContext) -> None:
                                                                           'Print /start to get start message\n')
 
 
+async def full_r_description(update: Update, context: CallbackContext) -> None:
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text="Для создания опроса введите команду '/event',"
+                                        "указав название этого опроса."
+                                        "Кнопка ✅ Going добавит вас в список тех, кто идет."
+                                        "Кнопка ❌ Not going добавит вас в список тех, кто идет."
+                                        "Кнопка 💭 Not sure добавит вас в список тех, кто идет."
+                                        "При нажатии кнопки Add ваш + будет добавлен в список, то есть количество "
+                                        "людей, которые придут с вами"
+                                        "При нажатии кнопки Sub будет убран 1 ваш +."
+                                        "При нажатии кнопки Sub all будут убраны все ваши +.")
+
+
 # keyboard layout with opportunity to go and cancel go
 def base_keyboard():
     keyboard = [[InlineKeyboardButton("Close event", callback_data='Change_state')],
                 [InlineKeyboardButton("✅ Going ", callback_data='Go'),
-                 InlineKeyboardButton("❎ Not going", callback_data='Not_go'),
-                 InlineKeyboardButton("🤔 Not sure", callback_data='Not_sure')],
+                 InlineKeyboardButton("❌ Not going", callback_data='Not_go'),
+                 InlineKeyboardButton("💭 Not sure", callback_data='Not_sure')],
                 [InlineKeyboardButton("Add ", callback_data='Add'),
                  InlineKeyboardButton("Sub", callback_data='Sub'),
                  InlineKeyboardButton("Sub all", callback_data='Sub_all')]]
@@ -44,7 +56,7 @@ def base_keyboard():
 # keyboard layout with opportunity to cancel go
 def closed_keyboard():
     keyboard = [[InlineKeyboardButton("Open event", callback_data='Change_state')],
-                [InlineKeyboardButton("❎ Not going", callback_data='Not_go')],
+                [InlineKeyboardButton("❌ Not going", callback_data='Not_go')],
                 [InlineKeyboardButton("Sub", callback_data='Sub'),
                  InlineKeyboardButton("Sub all", callback_data='Sub_all')]]
     return keyboard
@@ -56,14 +68,14 @@ async def create_event(update: Update, context: CallbackContext) -> None:
         name = '👉   No name event   👈\n'
     else:
         name = '👉   ' + ' '.join(item for item in context.args) + '   👈\n'
-    text = "Going🙂:\n" \
+    text = "Going😀:\n" \
            "Not going😐:\n" \
            "Not sure🤔:\n" \
            "Total going:\n" \
            "✅:\n" \
            "➕:\n" \
-           "❎:\n" \
-           "❔:" \
+           "❌:\n" \
+           "💭:" \
 
     keyboard = base_keyboard()
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -79,7 +91,7 @@ async def change_state(query, text_message) -> None:
         text_message = text_message[17:]
         keyboard = base_keyboard()
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text_message, reply_markup=reply_markup, parse_mode='Markdown')
+    await query.edit_message_text(text_message, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
 
 # get user who pressed button, check for keyboard and splits messages in categories
@@ -102,7 +114,7 @@ def add_to_message(temp, index, message, mind):
         text_message = start_text + mind + ' ' + message + end_text
     else:
         plus_list = []
-        for people in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+        for people in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
             if "➕" in people:
                 plus_list.append(temp.pop(temp.index(people)))
         start_text = "\n".join(m for m in temp[:temp.index(index)]) + '\n'
@@ -117,11 +129,11 @@ def add_to_message(temp, index, message, mind):
 # adds user to list of people, who are going
 async def go_event(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    if '❎ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
-        temp.pop(temp.index('❎ ' + message))
-    if '❔ ' + message in temp[temp.index("Not sure🤔:"):-5]:
-        temp.pop(temp.index('❔ ' + message))
-    if '✅ ' + message in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    if '❌ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
+        temp.pop(temp.index('❌ ' + message))
+    if '💭 ' + message in temp[temp.index("Not sure🤔:"):-5]:
+        temp.pop(temp.index('💭 ' + message))
+    if '✅ ' + message in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         pass
     else:
         text_message = add_to_message(temp, "Not going😐:", message, '✅')
@@ -131,35 +143,35 @@ async def go_event(query, text_message) -> None:
 # adds user to list of people, who are not going
 async def not_go(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    if '✅ ' + message in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    if '✅ ' + message in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         temp.pop(temp.index('✅ ' + message))
-    if '❔ ' + message in temp[temp.index("Not sure🤔:"):-5]:
-        temp.pop(temp.index('❔ ' + message))
-    if '❎ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
+    if '💭 ' + message in temp[temp.index("Not sure🤔:"):-5]:
+        temp.pop(temp.index('💭 ' + message))
+    if '❌ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
         pass
     else:
-        text_message = add_to_message(temp, "Not sure🤔:", message, '❎')
+        text_message = add_to_message(temp, "Not sure🤔:", message, '❌')
         await count_people(query, text_message, reply_markup)
 
 
 # adds user to list of people, who are not sure
 async def not_sure(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    if '✅ ' + message in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    if '✅ ' + message in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         temp.pop(temp.index('✅ ' + message))
-    if '❎ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
-        temp.pop(temp.index('❎ ' + message))
-    if '❔ ' + message in temp[temp.index("Not sure🤔:"):-5]:
+    if '❌ ' + message in temp[temp.index("Not going😐:"):temp.index("Not sure🤔:")]:
+        temp.pop(temp.index('❌ ' + message))
+    if '💭 ' + message in temp[temp.index("Not sure🤔:"):-5]:
         pass
     else:
-        text_message = add_to_message(temp, temp[-5], message, '❔')
+        text_message = add_to_message(temp, temp[-5], message, '💭')
         await count_people(query, text_message, reply_markup)
 
 
 # adds people to list of people, who will go with main participant
 async def add(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    for people in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    for people in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         if ("➕" in people) and (message in people):
             number = int(people[1:people.index(", from:")]) + 1
             temp[temp.index(people)] = f"➕{number}, from: {message}"
@@ -173,7 +185,7 @@ async def add(query, text_message) -> None:
 # deletes people from list of people, who will go with main participant
 async def sub(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    for people in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    for people in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         if ("➕" in people) and (message in people):
             number = int(people[1:people.index(", from:")]) - 1
             if number <= 0:
@@ -189,7 +201,7 @@ async def sub(query, text_message) -> None:
 # deletes all people from list of people, who will go with main participant
 async def sub_all(query, text_message) -> None:
     message, reply_markup, temp = press(query, text_message)
-    for people in temp[temp.index("Going🙂:"):temp.index("Not going😐:")]:
+    for people in temp[temp.index("Going😀:"):temp.index("Not going😐:")]:
         if ("➕" in people) and (message in people):
             temp.pop(temp.index(people))
             text_message = "\n".join(m for m in temp)
@@ -209,19 +221,19 @@ async def count_people(query, text_message, reply_markup) -> None:
     for pos in temp_count:
         if "✅" in pos:
             going += 1
-        elif "❎" in pos:
+        elif ("❌" in pos) and (pos != "❌ EVENT CLOSED ❌"):
             not_going += 1
-        elif "❔" in pos:
+        elif "💭" in pos:
             in_doubt += 1
         elif "➕" in pos:
             going_plus += int(pos[1:pos.index(", from:")])
     temp[-5] = f"Total going: {going + going_plus}"
     temp[-4] = f"✅: {going}"
     temp[-3] = f"➕: {going_plus}"
-    temp[-2] = f"❎: {not_going}"
-    temp[-1] = f"❔: {in_doubt}"
+    temp[-2] = f"❌: {not_going}"
+    temp[-1] = f"💭: {in_doubt}"
     text_message = "\n".join(m for m in temp)
-    await query.edit_message_text(text_message, reply_markup=reply_markup, parse_mode='Markdown')
+    await query.edit_message_text(text_message, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
 
 # handle buttons pressed on keyboard
@@ -254,6 +266,7 @@ def eventbot() -> None:
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('event', create_event))
+    application.add_handler(CommandHandler('description', full_r_description))
     application.add_handler(CallbackQueryHandler(button))
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
