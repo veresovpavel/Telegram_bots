@@ -1,12 +1,12 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Bot
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, CallbackContext
 
 
 load_dotenv()
-EVENT_TOKEN = os.getenv('EventBot_TOKEN')
+EVENT_TOKEN = os.getenv('PavelveBot_TOKEN')
 
 # logger at info level
 logging.basicConfig(filename='event.log',
@@ -25,7 +25,9 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 async def help_command(update: Update, context: CallbackContext) -> None:
     await context.bot.send_message(chat_id=update.effective_chat.id, text='Print "/event EVENT NAME to create event\n'
-                                                                          'Print /start to get start message\n')
+                                                                          'Print /start to get start message\n'
+                                                                          'Print /description to get description'
+                                                                          ' (in russian)')
 
 
 async def full_r_description(update: Update, context: CallbackContext) -> None:
@@ -47,9 +49,9 @@ def base_keyboard():
                 [InlineKeyboardButton("✅ Going ", callback_data='Go'),
                  InlineKeyboardButton("❌ Not going", callback_data='Not_go'),
                  InlineKeyboardButton("💭 Not sure", callback_data='Not_sure')],
-                [InlineKeyboardButton("Add ", callback_data='Add'),
-                 InlineKeyboardButton("Sub", callback_data='Sub'),
-                 InlineKeyboardButton("Sub all", callback_data='Sub_all')]]
+                [InlineKeyboardButton("➕ Add ", callback_data='Add'),
+                 InlineKeyboardButton("➖ Sub", callback_data='Sub'),
+                 InlineKeyboardButton("➖ Sub all", callback_data='Sub_all')]]
     return keyboard
 
 
@@ -87,9 +89,11 @@ async def change_state(query, text_message) -> None:
     if text_message[:16] != "❌ EVENT CLOSED ❌":
         text_message = '❌ EVENT CLOSED ❌\n' + text_message
         keyboard = closed_keyboard()
+        await query.answer(text=f"You Closed event")
     else:
         text_message = text_message[17:]
         keyboard = base_keyboard()
+        await query.answer(text=f"You Opened event")
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text_message, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
@@ -240,20 +244,25 @@ async def count_people(query, text_message, reply_markup) -> None:
 async def button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     text_message = query.message.text_markdown_v2
-    await query.answer()
     if query.data == 'Change_state':
         await change_state(query, text_message)
     elif query.data == 'Go':
+        await query.answer(text=f"You pressed ✅ Going")
         await go_event(query, text_message)
     elif query.data == 'Not_go':
+        await query.answer(text=f"You pressed ❌ Not going")
         await not_go(query, text_message)
     elif query.data == 'Not_sure':
+        await query.answer(text=f"You pressed 💭 Not sure")
         await not_sure(query, text_message)
     elif query.data == 'Add':
+        await query.answer(text=f"You pressed ➕ Add")
         await add(query, text_message)
     elif query.data == 'Sub':
+        await query.answer(text=f"You pressed ➖ Sub")
         await sub(query, text_message)
     elif query.data == 'Sub_all':
+        await query.answer(text=f"You pressed ➖ Sub all")
         await sub_all(query, text_message)
 
 
