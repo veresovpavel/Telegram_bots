@@ -246,12 +246,6 @@ def create_event(message) -> None:
     thread_id = message.message_thread_id
     chat_id = message.chat.id
 
-    log_user_action(
-        message.from_user, "CREATE_EVENT_COMMAND",
-        additional_info=f"Chat: {chat_id}, Thread: {thread_id}",
-        chat=message.chat
-    )
-
     if len(message.text.split()) == 1:
         name = '👉   No name event   👈\n'
     else:
@@ -266,12 +260,18 @@ def create_event(message) -> None:
             "❌:\n"
             "💭:")
 
-    send_message_with_thread(
+    sent_msg = send_message_with_thread(
         chat_id=chat_id,
         text=name + text,
         thread_id=thread_id,
         reply_markup=base_keyboard(),
         parse_mode="HTML"
+    )
+
+    log_user_action(
+        message.from_user, "CREATE_EVENT_COMMAND",
+        additional_info=f"Chat: {chat_id}, Thread: {thread_id}, Event:\n {name}MessageID: {sent_msg.message_id}",
+        chat=message.chat
     )
 
 
@@ -522,3 +522,5 @@ def callback_query(call):
     elif call.data == 'Sub_all':
         bot.answer_callback_query(call.id, text="You pressed ➖ Sub all")
         sub_all(call)
+
+# set webhook: https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=<YOUR_HTTPS_URL>
