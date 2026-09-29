@@ -254,19 +254,63 @@ function setupBot(bot: Bot<MyContext>, env: any) {
   });
 
   bot.callbackQuery("change_state", async (ctx) => {
-    if (!ctx.callbackQuery || !ctx.message || !ctx.from) return;
-    const msgId = ctx.message.message_id;
-    if (!await hasPermission(ctx)) {
-      await ctx.answerCallbackQuery("⛔ No permission"); return;
+    console.log("🔒 CHANGE_STATE pressed by:", ctx.from?.id);
+
+    if (!ctx.callbackQuery || !ctx.from) {
+      console.log("❌ change_state: missing callbackQuery or from");
+      await ctx.answerCallbackQuery("Error").catch(() => {});
+      return;
     }
-    const event = await ctx.env.DB.prepare("SELECT event_name, has_keepers, is_closed FROM events WHERE message_id = ?").bind(msgId).first() as any;
-    if (!event) return;
-    const newIsClosed = event.is_closed === 1 ? 0 : 1;
-    await ctx.env.DB.prepare("UPDATE events SET is_closed = ? WHERE message_id = ?").bind(newIsClosed, msgId).run();
-    const newText = await buildEventText(ctx.env.DB, msgId, event.event_name, newIsClosed === 1, event.has_keepers === 1);
-    await ctx.editMessageText(newText, { reply_markup: getKeyboard(newIsClosed === 1, event.has_keepers === 1), parse_mode: "HTML" });
-    await ctx.answerCallbackQuery(newIsClosed === 1 ? "You opened event" : "You closed event");
-    await logAction(ctx, "CHANGE_STATE", `Message ID: ${msgId}, Closed: ${newIsClosed}`);
+
+    try {
+      // ✅ Ключевое исправление: берём сообщение из callbackQuery
+      const callbackMessage = ctx.callbackQuery.message;
+      if (!callbackMessage || !('message_id' in callbackMessage)) {
+        console.log("❌ change_state: message inaccessible");
+        await ctx.answerCallbackQuery("⚠️ Cannot access this message").catch(() => {});
+        return;
+      }
+
+      const msgId = callbackMessage.message_id;
+
+      if (!await hasPermission(ctx)) {
+        console.log("⛔ change_state: no permission for user", ctx.from.id);
+        await ctx.answerCallbackQuery("⛔ You have no permission to open or close event");
+        return;
+      }
+
+      const event = await ctx.env.DB.prepare(
+        "SELECT event_name, has_keepers, is_closed FROM events WHERE message_id = ?"
+      ).bind(msgId).first() as any;
+
+      if (!event) {
+        console.log("❌ change_state: event not found, message_id:", msgId);
+        await ctx.answerCallbackQuery("⚠️ Событие не найдено в БД").catch(() => {});
+        return;
+      }
+
+      const newIsClosed = event.is_closed === 1 ? 0 : 1;
+      await ctx.env.DB.prepare(
+        "UPDATE events SET is_closed = ? WHERE message_id = ?"
+      ).bind(newIsClosed, msgId).run();
+
+      const newText = await buildEventText(
+        ctx.env.DB, msgId, event.event_name,
+        newIsClosed === 1, event.has_keepers === 1
+      );
+
+      await ctx.editMessageText(newText, {
+        reply_markup: getKeyboard(newIsClosed === 1, event.has_keepers === 1),
+        parse_mode: "HTML"
+      });
+
+      await ctx.answerCallbackQuery(newIsClosed === 1 ? "You closed event" : "You opened event");
+      await logAction(ctx, "CHANGE_STATE", `Message ID: ${msgId}, Closed: ${newIsClosed}`);
+      console.log("✨ change_state OK, new is_closed:", newIsClosed);
+    } catch (err) {
+      console.error("❌ change_state error:", err);
+      await ctx.answerCallbackQuery("Error: " + (err as Error).message).catch(() => {});
+    }
   });
 
   const actions = ["Go", "Not_go", "Not_sure", "Add", "Sub", "Sub_all", "Go_keeper", "Add_keeper", "Sub_keeper"];
