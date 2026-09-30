@@ -1,0 +1,105 @@
+# 📅 Telegram Event Bot
+
+Бот для опросов посещаемости в Telegram: участники голосуют кнопками, бот ведёт списки и счётчики.
+Serverless: Cloudflare Workers + база Cloudflare D1 (SQLite), TypeScript, grammY.
+
+Состояние опроса хранится в базе, а текст сообщения собирается из неё при каждом действии.
+Ключ события — пара `chat_id + message_id`, поэтому опросы в разных чатах и топиках не конфликтуют.
+
+## Команды
+
+| Команда | Доступ | Назначение |
+|---|---|---|
+| `/start` | все | справка |
+| `/event <название>` | все | создать опрос |
+| `/event_k <название>` | все | создать опрос с режимом вратарей 🥅 |
+| `/description` | все | описание кнопок |
+| `/rename <название>` | админы события* | переименовать (ответом на сообщение события) |
+| `/addadmin <user_id>` | создатель бота | добавить админа бота |
+| `/removeadmin <user_id>` | создатель бота | убрать админа бота |
+| `/admins` | создатель и админы бота | список админов бота |
+
+\* Админы события: создатель бота (`OWNER_ID`), админы бота (таблица `bot_admins`) и админы чата, где создано событие. Они же закрывают/открывают событие кнопкой.
+
+## Кнопки события
+
+| Кнопки | Действие |
+|---|---|
+| ✅ Going / ❌ Not going / 💭 Not sure | статус участия (взаимоисключающие) |
+| ➕ Add / ➖ Sub | +1 / −1 гость участника |
+| ➖ Sub all | убрать всех своих гостей, кроме вратарских |
+| ✅🥅 Going / ➕🥅 Add / ➖🥅 Sub | вратарь и его гости (только в `/event_k`) |
+| Close event / Open event | закрыть / открыть событие |
+
+- В закрытом событии остаются только ❌ Not going, ➖ Sub, ➖ Sub all (и ➖🥅 Sub в режиме вратарей).
+- Плюсы гостей хранятся отдельно от статуса участия: при смене статуса они не сгорают и видны в списках (как в оригинальной версии бота).
+- Итог `Total going` = все ✅ (включая вратарей) + все ➕ и ➕🥅.
+
+## Развёртывание
+
+Понадобятся Node.js 18+, аккаунт Cloudflare и токен бота от @BotFather.
+
+```bash
+npm install
+npx wrangler login
+
+# 1. База данных; полученный database_id вписать в wrangler.toml
+npx wrangler d1 create events-db
+
+# 2. Таблицы на сервере (без --remote создастся только локальная копия!)
+npx wrangler d1 execute events-db --remote --file=schema.sql
+
+# 3. Секреты — они не хранятся в репозитории
+npx wrangler secret put TELEGRAM_TOKEN   # токен @BotFather
+npx wrangler secret put ADMIN_CHAT_ID    # чат логов (супергруппы — с префиксом -100)
+npx wrangler secret put OWNER_ID         # Telegram ID создателя бота
+
+# 4. Деплой
+npx wrangler deploy
+```
+
+Затем один раз установить webhook (в браузере):
+
+```
+https://api.telegram.org/bot<TELEGRAM_TOKEN>/setWebhook?url=https://<имя-воркера>.workers.dev
+```
+
+Проверка: `/start`, `/event Тест`, нажать ✅ Going.
+
+## Разработка и логи
+
+- Локальные секреты — в файле `.dev.vars` (в git не попадает); запуск: `npx wrangler dev`.
+- Логи в реальном времени: `npx wrangler tail`; история — в дашборде Workers → Logs (Observability).
+- Действия пользователей дублируются HTML-сообщениями в `ADMIN_CHAT_ID`.
+
+## Ручные запросы к базе
+
+Дашборд: Workers & Pages → D1 → `events-db` → Console, либо CLI с флагом `--remote`.
+
+```sql
+SELECT chat_id, message_id, event_name, is_closed FROM events ORDER BY message_id DESC LIMIT 10;
+SELECT * FROM participants WHERE chat_id = -100123456789 AND message_id = 42;
+UPDATE events SET event_name = '👉 Новое имя 👈' WHERE chat_id = -100123456789 AND message_id = 42;
+UPDATE events SET is_closed = 0 WHERE chat_id = -100123456789 AND message_id = 42;
+SELECT user_id FROM bot_admins;
+```
+
+После ручной правки текст сообщения обновится при следующем нажатии любой кнопки события.
+
+## Структура проекта
+
+```
+src/index.ts     код бота
+schema.sql       схема D1
+wrangler.toml    конфигурация Cloudflare (без секретов)
+.dev.vars        локальные секреты (вне git)
+```
+
+## Безопасность
+
+Секреты живут только в Cloudflare Secrets и локальном `.dev.vars`.
+При утечке токена: `/revoke` у @BotFather → `wrangler secret put TELEGRAM_TOKEN` → `wrangler deploy` → повторный `setWebhook`.
+
+## Лицензия
+
+MIT
