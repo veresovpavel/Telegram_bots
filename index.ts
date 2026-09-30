@@ -89,14 +89,15 @@ function getKeyboard(isClosed: boolean, hasKeepers: boolean): InlineKeyboard {
 
 async function buildEventText(
   db: D1Database,
+  chatId: number,
   messageId: number,
   eventName: string,
   isClosed: boolean,
   hasKeepers: boolean
 ): Promise<string> {
   const { results } = await db.prepare(
-    "SELECT user_id, user_name, status, plus_count, keeper_plus_count FROM participants WHERE message_id = ?"
-  ).bind(messageId).all();
+    "SELECT user_id, user_name, status, plus_count, keeper_plus_count FROM participants WHERE chat_id = ? AND message_id = ?"
+  ).bind(chatId, messageId).all();
 
   const participants = (results || []) as any[];
 
@@ -159,10 +160,10 @@ async function createEvent(ctx: MyContext, hasKeepers: boolean) {
   const chatId = ctx.chat.id;
 
   await ctx.env.DB.prepare(
-    "INSERT INTO events (message_id, chat_id, event_name, has_keepers, is_closed) VALUES (?, ?, ?, ?, 0)"
-  ).bind(messageId, chatId, eventName, hasKeepers ? 1 : 0).run();
+    "INSERT INTO events (chat_id, message_id, event_name, has_keepers, is_closed) VALUES (?, ?, ?, ?, 0)"
+  ).bind(chatId, messageId, eventName, hasKeepers ? 1 : 0).run();
 
-  const finalText = await buildEventText(ctx.env.DB, messageId, eventName, false, hasKeepers);
+  const finalText = await buildEventText(ctx.env.DB, chatId, messageId, eventName, false, hasKeepers);
   const keyboard = getKeyboard(false, hasKeepers);
 
   await ctx.api.editMessageText(chatId, messageId, finalText, { 
@@ -253,6 +254,57 @@ function setupBot(bot: Bot<MyContext>, env: any) {
     await ctx.reply(msg);
   });
 
+  bot.command("rename", async (ctx) => {
+    if (!ctx.message) return;
+
+    const args = ctx.message.text?.split(" ").slice(1) || [];
+    if (args.length === 0) {
+      await ctx.reply("Использование: ответь на сообщение события командой:\n/rename Новое название");
+      return;
+    }
+
+    const target = ctx.message.reply_to_message;
+    if (!target) {
+      await ctx.reply("⚠️ Ответь на сообщение события, которое нужно переименовать.");
+      return;
+    }
+
+    if (!await hasPermission(ctx)) {
+      await ctx.reply("⛔ Нет прав: переименовывать могут создатель бота, админы бота и админы чата.");
+      return;
+    }
+
+    const msgId = target.message_id;
+    const chatId = ctx.chat.id;
+    const newName = `👉 ${args.join(" ")} 👈`;
+
+    const event = await ctx.env.DB.prepare(
+      "SELECT event_name, has_keepers, is_closed FROM events WHERE chat_id = ? AND message_id = ?"
+    ).bind(chatId, msgId).first() as any;
+
+    if (!event) {
+      await ctx.reply("⚠️ Это сообщение не является событием из базы данных.");
+      return;
+    }
+
+    await ctx.env.DB.prepare(
+      "UPDATE events SET event_name = ? WHERE chat_id = ? AND message_id = ?"
+    ).bind(newName, chatId, msgId).run();
+
+    const newText = await buildEventText(
+      ctx.env.DB, chatId, msgId, newName,
+      event.is_closed === 1, event.has_keepers === 1
+    );
+
+    await ctx.api.editMessageText(chatId, msgId, newText, {
+      reply_markup: getKeyboard(event.is_closed === 1, event.has_keepers === 1),
+      parse_mode: "HTML"
+    });
+
+    await ctx.reply("✅ Событие переименовано.");
+    await logAction(ctx, "RENAME_EVENT", `Message ID: ${msgId}, New name: ${newName}`);
+  });
+
   bot.callbackQuery("change_state", async (ctx) => {
     console.log("🔒 CHANGE_STATE pressed by:", ctx.from?.id);
 
@@ -272,6 +324,7 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       }
 
       const msgId = callbackMessage.message_id;
+      const chatId = callbackMessage.chat.id;
 
       if (!await hasPermission(ctx)) {
         console.log("⛔ change_state: no permission for user", ctx.from.id);
@@ -280,8 +333,8 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       }
 
       const event = await ctx.env.DB.prepare(
-        "SELECT event_name, has_keepers, is_closed FROM events WHERE message_id = ?"
-      ).bind(msgId).first() as any;
+        "SELECT event_name, has_keepers, is_closed FROM events WHERE chat_id = ? AND message_id = ?"
+      ).bind(chatId, msgId).first() as any;
 
       if (!event) {
         console.log("❌ change_state: event not found, message_id:", msgId);
@@ -291,11 +344,11 @@ function setupBot(bot: Bot<MyContext>, env: any) {
 
       const newIsClosed = event.is_closed === 1 ? 0 : 1;
       await ctx.env.DB.prepare(
-        "UPDATE events SET is_closed = ? WHERE message_id = ?"
-      ).bind(newIsClosed, msgId).run();
+        "UPDATE events SET is_closed = ? WHERE chat_id = ? AND message_id = ?"
+      ).bind(newIsClosed, chatId, msgId).run();
 
       const newText = await buildEventText(
-        ctx.env.DB, msgId, event.event_name,
+        ctx.env.DB, chatId, msgId, event.event_name,
         newIsClosed === 1, event.has_keepers === 1
       );
 
@@ -336,14 +389,15 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       
       const action = ctx.callbackQuery.data;
       const msgId = callbackMessage.message_id;
+      const chatId = callbackMessage.chat.id;
       const userId = ctx.from.id;
       const userLink = getUserLink(ctx.from);
       
       console.log("🔎 Looking for event in DB, message_id:", msgId);
       
       const event = await ctx.env.DB.prepare(
-        "SELECT event_name, has_keepers, is_closed FROM events WHERE message_id = ?"
-      ).bind(msgId).first() as any;
+        "SELECT event_name, has_keepers, is_closed FROM events WHERE chat_id = ? AND message_id = ?"
+      ).bind(chatId, msgId).first() as any;
       
       if (!event) {
         console.log("❌ Event not found in DB for message_id:", msgId);
@@ -359,8 +413,8 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       }
       
       const current = await ctx.env.DB.prepare(
-        "SELECT status, plus_count, keeper_plus_count FROM participants WHERE message_id = ? AND user_id = ?"
-      ).bind(msgId, userId).first() as any;
+        "SELECT status, plus_count, keeper_plus_count FROM participants WHERE chat_id = ? AND message_id = ? AND user_id = ?"
+      ).bind(chatId, msgId, userId).first() as any;
 
       let newStatus = current?.status || 'none';
       let newPlus = current?.plus_count || 0;
@@ -380,19 +434,19 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       console.log("💾 Updating DB: status=", newStatus, "plus=", newPlus, "keeperPlus=", newKeeperPlus);
 
       await ctx.env.DB.prepare(`
-        INSERT INTO participants (message_id, user_id, user_name, status, plus_count, keeper_plus_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(message_id, user_id) DO UPDATE SET
+        INSERT INTO participants (chat_id, message_id, user_id, user_name, status, plus_count, keeper_plus_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chat_id, message_id, user_id) DO UPDATE SET
           status = excluded.status,
           plus_count = excluded.plus_count,
           keeper_plus_count = excluded.keeper_plus_count,
           user_name = excluded.user_name
-      `).bind(msgId, userId, userLink, newStatus, newPlus, newKeeperPlus).run();
+      `).bind(chatId, msgId, userId, userLink, newStatus, newPlus, newKeeperPlus).run();
 
       console.log("🔨 Building new event text...");
       
       const newText = await buildEventText(
-        ctx.env.DB, msgId, event.event_name, 
+        ctx.env.DB, chatId, msgId, event.event_name,
         event.is_closed === 1, event.has_keepers === 1
       );
       
