@@ -14,19 +14,31 @@ export interface MyContext extends Context {
 
 // --- Вспомогательные функции ---
 
+// Экранирует HTML-спецсимволы, чтобы имена и названия не ломали разметку
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function getUserLink(user: any): string {
-  const name = `${user.first_name || ""} ${user.last_name || ""}`.trim() || "User";
+  const name = escapeHtml(`${user.first_name || ""} ${user.last_name || ""}`.trim() || "User");
   return `<a href="tg://user?id=${user.id}">${name}</a>`;
 }
 
 async function logAction(ctx: MyContext, action: string, info: string) {
   try {
     if (!ctx.env.ADMIN_CHAT_ID || !ctx.from) return;
-    const userLink = getUserLink(ctx.from);
+
+    const name = `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim() || "User";
     const chatInfo = ctx.chat?.title ? `Chat: ${ctx.chat.title}` : `Chat ID: ${ctx.chat?.id}`;
-    const msg = `${userLink}\nAction: ${action}\nInfo: ${info}\n${chatInfo}`;
-    
-    await ctx.api.sendMessage(ctx.env.ADMIN_CHAT_ID, msg, { parse_mode: "HTML" });
+    const text = `${name}\nAction: ${action}\nInfo: ${info}\n${chatInfo}`;
+
+    // Упоминание через сущность text_mention: работает без username
+    // и не зависит от настроек приватности ссылок tg://user?id=
+    await ctx.api.sendMessage(ctx.env.ADMIN_CHAT_ID, text, {
+      entities: [
+        { type: "text_mention", offset: 0, length: name.length, user: ctx.from },
+      ],
+    });
   } catch (err) {
     console.error("Log error (ignored):", err);
   }
@@ -96,7 +108,7 @@ async function buildEventText(
   hasKeepers: boolean
 ): Promise<string> {
   const { results } = await db.prepare(
-    "SELECT user_id, user_name, status, plus_count, keeper_plus_count FROM participants WHERE chat_id = ? AND message_id = ?"
+        "SELECT user_id, user_name, status, plus_count, keeper_plus_count, status_seq FROM participants WHERE chat_id = ? AND message_id = ? ORDER BY status_seq ASC"
   ).bind(chatId, messageId).all();
 
   const participants = (results || []) as any[];
@@ -153,7 +165,7 @@ async function buildEventText(
 async function createEvent(ctx: MyContext, hasKeepers: boolean) {
   if (!ctx.message) return;
   const args = ctx.message.text?.split(" ").slice(1) || [];
-  const eventName = args.length > 0 ? `👉 ${args.join(" ")} 👈` : "👉 No name event 👈";
+  const eventName = args.length > 0 ? `👉 ${escapeHtml(args.join(" "))} 👈` : "👉 No name event 👈";
 
   const sentMsg = await ctx.reply("Создаю опрос...", { parse_mode: "HTML" });
   const messageId = sentMsg.message_id;
@@ -276,7 +288,7 @@ function setupBot(bot: Bot<MyContext>, env: any) {
 
     const msgId = target.message_id;
     const chatId = ctx.chat.id;
-    const newName = `👉 ${args.join(" ")} 👈`;
+    const newName = `👉 ${escapeHtml(args.join(" "))} 👈`;
 
     const event = await ctx.env.DB.prepare(
       "SELECT event_name, has_keepers, is_closed FROM events WHERE chat_id = ? AND message_id = ?"
@@ -413,7 +425,7 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       }
       
       const current = await ctx.env.DB.prepare(
-        "SELECT status, plus_count, keeper_plus_count FROM participants WHERE chat_id = ? AND message_id = ? AND user_id = ?"
+        "SELECT status, plus_count, keeper_plus_count, status_seq FROM participants WHERE chat_id = ? AND message_id = ? AND user_id = ?"
       ).bind(chatId, msgId, userId).first() as any;
 
       let newStatus = current?.status || 'none';
@@ -431,17 +443,27 @@ function setupBot(bot: Bot<MyContext>, env: any) {
       else if (action === "Sub_keeper") { if (newKeeperPlus > 0) newKeeperPlus -= 1; }
       else if (action === "Sub_all") { newPlus = 0; } // вратарские плюсы не трогает
 
+      // Порядковый номер нажатия: обновляется только при смене статуса (как в оригинале)
+      let newSeq = current?.status_seq || 0;
+      const statusChanged = newStatus !== (current?.status || 'none');
+      if (statusChanged || !current) {
+        const maxRow = await ctx.env.DB.prepare(
+         "SELECT COALESCE(MAX(status_seq), 0) AS m FROM participants WHERE chat_id = ? AND message_id = ?"
+        ).bind(chatId, msgId).first() as any;
+        newSeq = (maxRow?.m || 0) + 1;
+      }
       console.log("💾 Updating DB: status=", newStatus, "plus=", newPlus, "keeperPlus=", newKeeperPlus);
 
       await ctx.env.DB.prepare(`
-        INSERT INTO participants (chat_id, message_id, user_id, user_name, status, plus_count, keeper_plus_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO participants (chat_id, message_id, user_id, user_name, status, plus_count, keeper_plus_count, status_seq)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, message_id, user_id) DO UPDATE SET
           status = excluded.status,
           plus_count = excluded.plus_count,
           keeper_plus_count = excluded.keeper_plus_count,
+          status_seq = excluded.status_seq,
           user_name = excluded.user_name
-      `).bind(chatId, msgId, userId, userLink, newStatus, newPlus, newKeeperPlus).run();
+      `).bind(chatId, msgId, userId, userLink, newStatus, newPlus, newKeeperPlus, newSeq).run();
 
       console.log("🔨 Building new event text...");
       

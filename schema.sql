@@ -1,22 +1,22 @@
--- Telegram Event Bot: schema for Cloudflare D1
--- Применение: wrangler d1 execute events-db --remote --file=schema.sql
-
 CREATE TABLE IF NOT EXISTS events (
-  message_id INTEGER PRIMARY KEY,
   chat_id INTEGER,
+  message_id INTEGER,
   event_name TEXT,
   has_keepers INTEGER,
-  is_closed INTEGER
+  is_closed INTEGER,
+  PRIMARY KEY (chat_id, message_id)
 );
 
 CREATE TABLE IF NOT EXISTS participants (
+  chat_id INTEGER,
   message_id INTEGER,
   user_id INTEGER,
   user_name TEXT,
   status TEXT,
   plus_count INTEGER DEFAULT 0,
   keeper_plus_count INTEGER DEFAULT 0,
-  PRIMARY KEY (message_id, user_id)
+  status_seq INTEGER DEFAULT 0,
+  PRIMARY KEY (chat_id, message_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS bot_admins (
