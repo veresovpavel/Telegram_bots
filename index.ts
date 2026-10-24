@@ -154,8 +154,16 @@ async function buildEventText(
   lines.push(...(notSure.length ? notSure.map((p: any) => `💭 ${p.user_name}`) : ["-"]));
 
   lines.push(`Total going: ${totalGoing}`);
-  lines.push(`✅: ${goingCount + keeperCount}`);
-  lines.push(`➕: ${goingPlus + keeperPlus}`);
+  if (hasKeepers) {
+    // Раздельный расчёт: обычные участники и вратари
+    lines.push(`✅: ${goingCount}`);
+    lines.push(`➕: ${goingPlus}`);
+    lines.push(`✅🥅: ${keeperCount}`);
+    lines.push(`➕🥅: ${keeperPlus}`);
+  } else {
+    lines.push(`✅: ${goingCount + keeperCount}`);
+    lines.push(`➕: ${goingPlus + keeperPlus}`);
+  }
   lines.push(`❌: ${notGoing.length}`);
   lines.push(`💭: ${notSure.length}`);
 
